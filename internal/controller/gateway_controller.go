@@ -178,16 +178,65 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			msg:    "gateway proxy not found",
 		}
 	} else {
-		if len(gateway.Status.Addresses) != len(gatewayProxy.Spec.StatusAddress) {
-			for _, addr := range gatewayProxy.Spec.StatusAddress {
-				if addr == "" {
-					continue
+		// 1. use the IngressStatusAddress in the config
+		statusAddresses := gatewayProxy.Spec.StatusAddress
+		if len(statusAddresses) > 0 {
+			if len(gateway.Status.Addresses) != len(gatewayProxy.Spec.StatusAddress) {
+				for _, addr := range gatewayProxy.Spec.StatusAddress {
+					if addr == "" {
+						continue
+					}
+					addrs = append(addrs,
+						gatewayv1.GatewayStatusAddress{
+							Value: addr,
+						},
+					)
 				}
-				addrs = append(addrs,
-					gatewayv1.GatewayStatusAddress{
-						Value: addr,
-					},
-				)
+			}
+		} else {
+			// 2. if the IngressStatusAddress is not configured, try to use the PublishService
+			publishService := gatewayProxy.Spec.PublishService
+			if publishService != "" {
+				// parse the namespace/name format
+				namespace, name, err := SplitMetaNamespaceKey(publishService)
+				if err != nil {
+					conditionProgrammedStatus = false
+					conditionProgrammedMsg = fmt.Sprintf("invalid ingress-publish-service format: %s, expected format: namespace/name", publishService)
+				}
+				// if the namespace is not specified, use the ingress namespace
+				if namespace == "" {
+					namespace = gateway.Namespace
+				}
+
+				svc := &corev1.Service{}
+				if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, svc); err != nil {
+					conditionProgrammedStatus = false
+					conditionProgrammedMsg = fmt.Sprintf("failed to get publish service %s: %s", publishService, err.Error())
+				}
+
+				if svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+					// get the LoadBalancer IP and Hostname of the service
+					for _, ip := range svc.Status.LoadBalancer.Ingress {
+						if ip.IP != "" {
+							addrType := gatewayv1.IPAddressType
+							addrs = append(addrs,
+								gatewayv1.GatewayStatusAddress{
+									Type:  &addrType,
+									Value: ip.IP,
+								},
+							)
+						}
+						if ip.Hostname != "" {
+							addrType := gatewayv1.HostnameAddressType
+							addrs = append(addrs,
+								gatewayv1.GatewayStatusAddress{
+									Type:  &addrType,
+									Value: ip.Hostname,
+								},
+							)
+						}
+					}
+				}
 			}
 		}
 	}
