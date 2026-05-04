@@ -737,7 +737,7 @@ func (t *Translator) translateGatewayHTTPRouteMatch(match *gatewayv1.HTTPRouteMa
 			this = append(this, adctypes.StringOrSlice{
 				StrVal: *match.Path.Value,
 			})
-
+			route.Uris = []string{"/", "/*"}
 			route.Vars = append(route.Vars, this)
 		default:
 			return nil, errors.New("unknown path match type " + string(*match.Path.Type))
